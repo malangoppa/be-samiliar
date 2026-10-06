@@ -79,6 +79,13 @@ h1,h2,p{margin:0}
 .lowrow .memo{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rate{font-weight:700;font-size:18px;color:var(--wrong);text-align:right;display:flex;flex-direction:column;font-variant-numeric:tabular-nums;flex:none}
 .rate small{font-size:13px;font-weight:400;color:var(--muted)}
+.goal{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line-card);border-radius:14px;padding:16px;background:transparent}
+.chip.goal-cta{align-self:flex-start;display:inline-flex;align-items:center;background:var(--point);border-color:var(--point);color:var(--white)}
+.gbar{display:block;height:10px;border-radius:9999px;background:rgba(26,26,26,.08);overflow:hidden}
+.gbar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--point),var(--sub),var(--highlight));transition:width .6s ease-out}
+.goal-line{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.goal-line strong{font-size:18px}
+.chip.addteam{border-style:dashed}
 /* 아바타 */
 .av{border-radius:50%;overflow:hidden;flex:none;display:block;background:var(--bg-soft)}
 .av svg,.av img{width:100%;height:100%;display:block;object-fit:cover}
@@ -239,10 +246,14 @@ function seed(){
     persons: SEED.map(p=>({...p, photo:""})),
     studyDays: [1,2,3,4].map(n=>ymd(addDays(today,-n))),
     settings: {mode:"subj", show:"face", ask:["name","team"], teams:[], count:10, time:10},
-    lastWrong: []
+    lastWrong: [],
+    customTeams: [],
+    goal: null
   };
 }
-let DB = load() || seed(); save();
+let DB = load() || seed();
+if(!DB.customTeams) DB.customTeams=[]; if(DB.goal===undefined) DB.goal=null;
+save();
 const params = new URLSearchParams(location.search);
 if(params.has("reset")){ DB = seed(); save(); }
 
@@ -252,7 +263,7 @@ const isMastered = p => p.attempts>=MASTER_MIN && rate(p)>=MASTER_RATE;
 const isLow = p => p.attempts>=1 && rate(p)<LOW_RATE;
 const lowList = () => DB.persons.filter(isLow).sort((a,b)=>rate(a)-rate(b)||b.attempts-a.attempts);
 function teams(){
-  const s = new Set(DB.persons.map(p=>p.team).filter(Boolean));
+  const s = new Set([...DB.persons.map(p=>p.team), ...(DB.customTeams||[])].filter(Boolean));
   return [...TEAM_ORDER.filter(t=>s.has(t)), ...[...s].filter(t=>!TEAM_ORDER.includes(t)).sort()];
 }
 function roles(){
@@ -387,16 +398,50 @@ function Home(){
         <span class="pct">${pct}%</span></div>
       <div><p>지금까지 전체 인물의 <strong>${pct}%</strong>를 외우셨어요.</p><p class="caption" style="margin-top:4px">${m} / ${total}명 암기 완료</p></div>
     </section>
+    ${goalHTML(pct, m, total)}
     ${low.length?`<button class="card review tappable" id="reviewCard" aria-haspopup="dialog">
       <span class="review-head"><span class="label">한 번 더 확인해 볼까요?</span><span class="chev" aria-hidden="true">${I.chev}</span></span>
       <span class="faces">${low.slice(0,3).map(p=>avatar(p,52)).join("")}</span>
       <span class="caption" style="color:var(--text)">${reviewText}</span>
     </button>`:`<section class="card review"><p class="label">한 번 더 확인해 볼까요?</p><p class="caption" style="color:var(--text)">${reviewText}</p></section>`}
   </div>`;
+  document.getElementById("goalBtn").onclick = goalSheet;
+  const gb = document.getElementById("goalBar"); if(gb) requestAnimationFrame(()=>requestAnimationFrame(()=>{ gb.style.width = gb.dataset.w+"%"; }));
   const rc = document.getElementById("reviewCard");
   if(rc) rc.onclick = ()=>lowSheet(low);
   const arc = document.getElementById("arc");
   requestAnimationFrame(()=>requestAnimationFrame(()=>{ arc.style.strokeDashoffset = C*(1-pct/100); }));
+}
+
+function goalHTML(pct, m, total){
+  const g = DB.goal;
+  if(!g || !total) return `<button class="goal tappable" id="goalBtn" aria-haspopup="dialog">
+      <span class="review-head"><span class="label">이번 주 목표</span><span class="chev" aria-hidden="true">${I.chev}</span></span>
+      <span class="caption">목표 암기율을 정하면 달성률을 보여 드려요</span>
+      <span class="chip goal-cta">목표 설정</span></button>`;
+  const need = Math.ceil(total*g/100), left = Math.max(0, need-m), prog = Math.min(100, Math.round(pct/g*100));
+  return `<button class="goal tappable" id="goalBtn" aria-haspopup="dialog">
+      <span class="review-head"><span class="label">이번 주 목표 ${g}%</span><span class="chev" aria-hidden="true">${I.chev}</span></span>
+      <span class="gbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${prog}" aria-label="목표 달성률"><i id="goalBar" data-w="${prog}" style="width:0"></i></span>
+      <span class="goal-line"><span>달성률 <strong>${prog}%</strong></span><span class="caption">${left ? `목표까지 ${left}명 남았어요` : "이번 주 목표를 달성하셨어요"}</span></span>
+    </button>`;
+}
+function goalSheet(){
+  let pick = DB.goal || 80;
+  const opts=[50,60,70,80,90,100];
+  sheet(`<h2>이번 주 목표</h2>
+    <p class="caption">이번 주까지 전체 인물의 몇 %를 외우실래요?</p>
+    <div class="chips" id="goalChips">${opts.map(v=>`<button class="chip" data-v="${v}" aria-pressed="${v===pick}">${v}%</button>`).join("")}</div>
+    <p class="caption" id="goalHint"></p>
+    <div class="row2">${DB.goal?`<button class="btn" id="clr">목표 해제</button>`:`<button class="btn" id="cls">닫기</button>`}<button class="btn primary" id="sv">저장</button></div>`, s=>{
+    const total=DB.persons.length, m=DB.persons.filter(isMastered).length;
+    const hint=()=>{ const need=Math.ceil(total*pick/100); s.querySelector("#goalHint").textContent = need>m ? `${need}명을 외우면 달성이에요. 지금 ${m}명 외우셨어요` : `이미 달성한 목표예요`; };
+    hint();
+    s.querySelector("#goalChips").onclick=e=>{ const b=e.target.closest("[data-v]"); if(!b) return; pick=+b.dataset.v; s.querySelectorAll("#goalChips .chip").forEach(c=>c.setAttribute("aria-pressed",c===b)); hint(); };
+    const c=s.querySelector("#cls"); if(c) c.onclick=closeSheet;
+    const r=s.querySelector("#clr"); if(r) r.onclick=()=>{ DB.goal=null; save(); closeSheet(); toast("목표를 해제했어요"); Home(); };
+    s.querySelector("#sv").onclick=()=>{ DB.goal=pick; save(); closeSheet(); toast("목표를 저장했어요"); Home(); };
+  });
 }
 
 function lowSheet(low){
@@ -457,12 +502,12 @@ function Edit(){
       <input class="input" id="f-name" placeholder="이름을 입력하세요" value="${esc(draft.name)}" autocomplete="off"><p class="err" id="nameErr" hidden>이름을 입력하세요</p></div>
     <div class="field"><label class="label" for="f-role">직급</label>
       <input class="input" id="f-role" list="roleList" placeholder="직급을 입력하세요" value="${esc(draft.role)}" autocomplete="off"></div>
-    <div class="field"><label class="label" for="f-team">소속 팀</label>
-      <input class="input" id="f-team" list="teamList" placeholder="팀을 입력하세요" value="${esc(draft.team)}" autocomplete="off"></div>
+    <div class="field"><p class="label" id="teamLabel">소속 팀</p>
+      <div class="chips" id="teamPick" role="group" aria-labelledby="teamLabel">${teams().map(t=>`<button class="chip" data-team="${esc(t)}" aria-pressed="${draft.team===t}">${esc(t)}</button>`).join("")}<button class="chip addteam" id="addTeamBtn" aria-expanded="false">+ 새 팀</button></div>
+      <div class="ansrow" id="newTeamRow" hidden><input class="input" id="f-newteam" placeholder="새 팀 이름을 입력하세요" autocomplete="off" maxlength="20"><button class="btn primary" id="addTeam" style="width:auto;height:48px;padding:0 18px;font-size:16px">추가</button></div></div>
     <div class="field"><label class="label" for="f-memo">메모</label>
       <textarea class="input" id="f-memo" placeholder="예: 커피 애호가, 법인세 신고 담당">${esc(draft.memo)}</textarea></div>
     <datalist id="roleList">${roles().map(r=>`<option value="${esc(r)}">`).join("")}</datalist>
-    <datalist id="teamList">${teams().map(t=>`<option value="${esc(t)}">`).join("")}</datalist>
     <div class="btnstack">
       <button class="btn import li" id="impLi">${LOGO_LINKEDIN?`<img src="${LOGO_LINKEDIN}" alt="LinkedIn">`:"LinkedIn"}<span>에서 가져오기</span></button>
       <button class="btn import" id="impPwc">${LOGO_PWC?`<img src="${LOGO_PWC}" alt="pwc">`:"pwc"}<span>에서 가져오기</span></button>
@@ -472,9 +517,17 @@ function Edit(){
     <p class="caption center">사진과 정보는 이 기기에만 저장돼요</p>
   </div>`;
   const $ = id=>document.getElementById(id);
-  const sync = ()=>{ draft.name=$("f-name").value; draft.role=$("f-role").value; draft.team=$("f-team").value; draft.memo=$("f-memo").value; };
-  ["f-name","f-role","f-team","f-memo"].forEach(id=>$(id).addEventListener("input",sync));
+  const sync = ()=>{ draft.name=$("f-name").value; draft.role=$("f-role").value; draft.memo=$("f-memo").value; };
+  ["f-name","f-role","f-memo"].forEach(id=>$(id).addEventListener("input",sync));
   $("back").onclick = leave;
+  $("teamPick").onclick = e=>{ const b=e.target.closest("[data-team]"); if(!b) return; sync(); draft.team = draft.team===b.dataset.team ? "" : b.dataset.team;
+    $("teamPick").querySelectorAll("[data-team]").forEach(c=>c.setAttribute("aria-pressed", c.dataset.team===draft.team)); };
+  $("addTeamBtn").onclick = ()=>{ const r=$("newTeamRow"); r.hidden=!r.hidden; $("addTeamBtn").setAttribute("aria-expanded", !r.hidden); if(!r.hidden) $("f-newteam").focus(); };
+  const addTeam = ()=>{ const t=$("f-newteam").value.trim().replace(/\s+/g," "); if(!t){ toast("팀 이름을 입력하세요"); return; }
+    if(!teams().includes(t)){ DB.customTeams.push(t); save(); toast("팀을 추가했어요"); }
+    sync(); draft.team=t; const y=window.scrollY; Edit(); window.scrollTo(0,y); };
+  $("addTeam").onclick = addTeam;
+  $("f-newteam").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); addTeam(); } });
   $("photoBtn").onclick = ()=>$("file").click();
   $("file").onchange = e=>{ const f=e.target.files[0]; if(!f) return; resizeImage(f, 240).then(url=>{ sync(); draft.photo=url; Edit(); }).catch(()=>toast("사진을 불러오지 못했어요")); };
   $("impLi").onclick = ()=>toast("데모에서는 아직 지원하지 않아요");
